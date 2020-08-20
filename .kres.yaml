@@ -1,0 +1,5 @@
+---
+kind: auto.CommandConfig
+name: integration-test
+spec:
+  disableImage: true
