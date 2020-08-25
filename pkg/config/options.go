@@ -39,10 +39,10 @@ func DefaultOptions() Options {
 		BootstrapClusterName:    "sfyra",
 		BootstrapTalosVmlinuz:   "_out/vmlinuz",
 		BootstrapTalosInitramfs: "_out/initramfs.xz",
-		BootstrapTalosInstaller: "docker.io/autonomy/installer:v0.7.0-alpha.0",
+		BootstrapTalosInstaller: "docker.io/autonomy/installer:v0.7.0-alpha.1",
 
-		TalosKernelURL: "https://github.com/talos-systems/talos/releases/download/v0.7.0-alpha.0/vmlinuz",
-		TalosInitrdURL: "https://github.com/talos-systems/talos/releases/download/v0.7.0-alpha.0/initramfs.xz",
+		TalosKernelURL: "https://github.com/talos-systems/talos/releases/download/v0.7.0-alpha.1/vmlinuz",
+		TalosInitrdURL: "https://github.com/talos-systems/talos/releases/download/v0.7.0-alpha.1/initramfs.xz",
 
 		BootstrapProviders:      []string{"talos"},
 		InfrastructureProviders: []string{"sidero"},
@@ -50,7 +50,7 @@ func DefaultOptions() Options {
 
 		CIDR: "172.24.0.0/24",
 
-		Nodes: 1,
+		Nodes: 4,
 
 		MemMB:  2048,
 		CPUs:   2,

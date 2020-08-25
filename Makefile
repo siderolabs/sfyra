@@ -1,6 +1,6 @@
 # THIS FILE WAS AUTOMATICALLY GENERATED, PLEASE DO NOT EDIT.
 #
-# Generated on 2020-08-31T18:37:57Z by kres 08e8fca-dirty.
+# Generated on 2020-09-03T20:04:54Z by kres acd259e-dirty.
 
 # common variables
 
@@ -36,6 +36,10 @@ COMMON_ARGS += --build-arg=GOFUMPT_VERSION=$(GOFUMPT_VERSION)
 COMMON_ARGS += --build-arg=TESTPKGS=$(TESTPKGS)
 TOOLCHAIN ?= docker.io/golang:1.14-alpine
 
+# extra variables
+
+TALOS_RELEASE ?= v0.7.0-alpha.1
+
 # help menu
 
 export define HELP_MENU_HEADER
@@ -69,7 +73,7 @@ respectively.
 
 endef
 
-all: unit-tests integration-test lint
+all: unit-tests integration-test run-integration-test lint
 
 .PHONY: clean
 clean:  ## Cleans up all artifacts.
@@ -116,6 +120,20 @@ $(ARTIFACTS)/integration-test:
 
 .PHONY: integration-test
 integration-test: $(ARTIFACTS)/integration-test  ## Builds executable for integration-test.
+
+$(ARTIFACTS)/$(TALOS_RELEASE)/%:
+	@mkdir -p $(ARTIFACTS)/$(TALOS_RELEASE)/
+	@curl -L -o "$(ARTIFACTS)/$(TALOS_RELEASE)/$*" "https://github.com/talos-systems/talos/releases/download/$(TALOS_RELEASE)/$*"
+
+.PHONY: $(ARTIFACTS)/$(TALOS_RELEASE)
+$(ARTIFACTS)/$(TALOS_RELEASE): $(ARTIFACTS)/$(TALOS_RELEASE)/vmlinuz $(ARTIFACTS)/$(TALOS_RELEASE)/initramfs.xz $(ARTIFACTS)/$(TALOS_RELEASE)/talosctl-linux-amd64
+
+.PHONY: talos-artifacts
+talos-artifacts: $(ARTIFACTS)/$(TALOS_RELEASE)
+
+.PHONY: run-integration-test
+run-integration-test: talos-artifacts
+	@ARTIFACTS=$(ARTIFACTS) TALOS_RELEASE=$(TALOS_RELEASE) ./hack/test/integration-test.sh
 
 .PHONY: lint-markdown
 lint-markdown:  ## Runs markdownlint.
