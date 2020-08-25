@@ -1,7 +1,7 @@
 ---
 # THIS FILE WAS AUTOMATICALLY GENERATED, PLEASE DO NOT EDIT.
 #
-# Generated on 2020-08-24T16:38:18Z by kres bdd2a39-dirty.
+# Generated on 2020-09-03T20:15:36Z by kres e87a7d8-dirty.
 
 kind: pipeline
 type: kubernetes
@@ -122,6 +122,24 @@ steps:
   depends_on:
   - base
 
+- name: run-integration-test
+  pull: always
+  image: autonomy/build-container:latest
+  commands:
+  - make run-integration-test
+  privileged: true
+  volumes:
+  - name: outer-docker-socket
+    path: /var/outer-run
+  - name: docker-socket
+    path: /var/run
+  - name: buildx
+    path: /root/.docker/buildx
+  - name: ssh
+    path: /root/.ssh
+  depends_on:
+  - integration-test
+
 - name: lint
   pull: always
   image: autonomy/build-container:latest
@@ -151,6 +169,10 @@ services:
   - --log-level=error
   - --insecure-registry=http://registry.ci.svc:5000
   privileged: true
+  resources:
+    requests:
+      cpu: 24000
+      memory: 48GiB
   volumes:
   - name: outer-docker-socket
     path: /var/outer-run
