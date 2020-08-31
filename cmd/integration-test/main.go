@@ -30,6 +30,8 @@ func main() {
 	flag.IntVar(&options.Nodes, "nodes", options.Nodes, "number of PXE nodes to create")
 	flag.StringVar(&options.TalosctlPath, "talosctl-path", options.TalosctlPath, "path to the talosctl (for qemu provisioner)")
 	flag.Var(&options.RegistryMirrors, "registry-mirrors", "registry mirrors to use")
+	flag.StringVar(&options.TalosKernelURL, "talos-kernel-url", options.TalosKernelURL, "Talos kernel image URL for Cluster API Environment")
+	flag.StringVar(&options.TalosInitrdURL, "talos-initrd-url", options.TalosInitrdURL, "Talos initramfs image URL for Cluster API Environment")
 
 	testing.Init()
 

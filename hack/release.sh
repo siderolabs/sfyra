@@ -2,14 +2,14 @@
 
 # THIS FILE WAS AUTOMATICALLY GENERATED, PLEASE DO NOT EDIT.
 #
-# Generated on 2020-08-19T18:57:40Z by kres 18a671e-dirty.
+# Generated on 2020-08-31T18:37:57Z by kres 08e8fca-dirty.
 
 
 set -e
 
 function changelog {
   if [ "$#" -eq 1 ]; then
-    git-chglog --output CHANGELOG.md -c ./hack/git-chglog/config.yaml --tag-filter-pattern "^${1}" "${1}.0-alpha.1.."
+    git-chglog --output CHANGELOG.md -c ./hack/git-chglog/config.yaml --tag-filter-pattern "^${1}" "${1}.0-alpha.0.."
   elif [ "$#" -eq 0 ]; then
     git-chglog --output CHANGELOG.md -c ./hack/git-chglog/config.yaml
   else

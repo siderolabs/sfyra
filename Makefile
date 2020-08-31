@@ -1,6 +1,6 @@
 # THIS FILE WAS AUTOMATICALLY GENERATED, PLEASE DO NOT EDIT.
 #
-# Generated on 2020-08-24T16:38:18Z by kres bdd2a39-dirty.
+# Generated on 2020-08-31T18:37:57Z by kres 08e8fca-dirty.
 
 # common variables
 
@@ -127,7 +127,7 @@ lint: lint-golangci-lint lint-gofumpt lint-markdown  ## Run all linters for the 
 .PHONY: rekres
 rekres:
 	@docker pull $(KRES_IMAGE)
-	@docker run --rm -v $(PWD):/src -w /src $(KRES_IMAGE)
+	@docker run --rm -v $(PWD):/src -w /src -e GITHUB_TOKEN $(KRES_IMAGE)
 
 .PHONY: help
 help:  ## This help menu.
