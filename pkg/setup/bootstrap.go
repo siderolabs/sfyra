@@ -113,6 +113,16 @@ func (cluster *BootstrapCluster) findExisting(ctx context.Context) error {
 
 	config.Context = cluster.Options.BootstrapClusterName
 
+	_, cidr, err := net.ParseCIDR(cluster.Options.CIDR)
+	if err != nil {
+		return err
+	}
+
+	cluster.masterIP, err = talosnet.NthIPInNetwork(cidr, 2)
+	if err != nil {
+		return err
+	}
+
 	cluster.access = access.NewAdapter(cluster.cluster, provision.WithTalosConfig(config))
 
 	return nil
@@ -217,7 +227,12 @@ func (cluster *BootstrapCluster) create(ctx context.Context) error {
 			})
 	}
 
-	cluster.cluster, err = cluster.provisioner.Create(ctx, request, provision.WithBootlader(true), provision.WithTalosConfig(configBundle.TalosConfig()))
+	cluster.cluster, err = cluster.provisioner.Create(ctx, request,
+		provision.WithBootlader(true),
+		// TODO: UEFI doesn't work correctly on PXE timeout, as it drops to UEFI shell
+		// provision.WithUEFI(true),
+		provision.WithTalosConfig(configBundle.TalosConfig()),
+	)
 	if err != nil {
 		return err
 	}
@@ -229,13 +244,7 @@ func (cluster *BootstrapCluster) create(ctx context.Context) error {
 		return err
 	}
 
-	if c.Contexts == nil {
-		c.Contexts = map[string]*clientconfig.Context{}
-	}
-
-	c.Contexts[cluster.Options.BootstrapClusterName] = configBundle.TalosConfig().Contexts[cluster.Options.BootstrapClusterName]
-
-	c.Context = cluster.Options.BootstrapClusterName
+	c.Merge(configBundle.TalosConfig())
 
 	if err = c.Save(cluster.configPath); err != nil {
 		return err
