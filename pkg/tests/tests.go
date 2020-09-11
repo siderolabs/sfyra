@@ -36,12 +36,28 @@ func Run(ctx context.Context, options *config.Options, bootstrapCluster *setup.B
 			suite.TestServerRegistration,
 		},
 		{
+			"TestServerMgmtAPI",
+			suite.TestServerMgmtAPI,
+		},
+		{
+			"TestServerPatch",
+			suite.TestServerPatch,
+		},
+		{
+			"TestServersReady",
+			suite.TestServersReady,
+		},
+		{
 			"TestEnvironmentDefault",
 			suite.TestEnvironmentDefault,
 		},
 		{
 			"TestServerClassDefault",
 			suite.TestServerClassDefault,
+		},
+		{
+			"TestManagementCluster",
+			suite.TestManagementCluster,
 		},
 	}, nil, nil).Run() == 0
 }

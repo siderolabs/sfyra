@@ -38,7 +38,8 @@ type BootstrapCluster struct {
 	cluster     provision.Cluster
 	access      *access.Adapter
 
-	masterIP net.IP
+	gatewayIP net.IP
+	masterIP  net.IP
 
 	stateDir   string
 	configPath string
@@ -118,6 +119,11 @@ func (cluster *BootstrapCluster) findExisting(ctx context.Context) error {
 		return err
 	}
 
+	cluster.gatewayIP, err = talosnet.NthIPInNetwork(cidr, 1)
+	if err != nil {
+		return err
+	}
+
 	cluster.masterIP, err = talosnet.NthIPInNetwork(cidr, 2)
 	if err != nil {
 		return err
@@ -134,9 +140,7 @@ func (cluster *BootstrapCluster) create(ctx context.Context) error {
 		return err
 	}
 
-	var gatewayIP net.IP
-
-	gatewayIP, err = talosnet.NthIPInNetwork(cidr, 1)
+	cluster.gatewayIP, err = talosnet.NthIPInNetwork(cidr, 1)
 	if err != nil {
 		return err
 	}
@@ -156,7 +160,7 @@ func (cluster *BootstrapCluster) create(ctx context.Context) error {
 		Network: provision.NetworkRequest{
 			Name:        cluster.Options.BootstrapClusterName,
 			CIDR:        *cidr,
-			GatewayAddr: gatewayIP,
+			GatewayAddr: cluster.gatewayIP,
 			MTU:         1500,
 			Nameservers: defaultNameservers,
 			CNI: provision.CNIConfig{
@@ -313,6 +317,11 @@ func (cluster *BootstrapCluster) Access() *access.Adapter {
 // MasterIP returns the IP of the master node.
 func (cluster *BootstrapCluster) MasterIP() net.IP {
 	return cluster.masterIP
+}
+
+// GatewayIP returns the IP of the gateway (bridge).
+func (cluster *BootstrapCluster) GatewayIP() net.IP {
+	return cluster.gatewayIP
 }
 
 // Nodes return information about PXE VMs.
