@@ -15,6 +15,7 @@ type Options struct {
 
 	TalosKernelURL string
 	TalosInitrdURL string
+	TalosInstaller string
 
 	BootstrapProviders      []string
 	InfrastructureProviders []string
@@ -39,10 +40,11 @@ func DefaultOptions() Options {
 		BootstrapClusterName:    "sfyra",
 		BootstrapTalosVmlinuz:   "_out/vmlinuz",
 		BootstrapTalosInitramfs: "_out/initramfs.xz",
-		BootstrapTalosInstaller: "docker.io/autonomy/installer:v0.7.0-alpha.1",
+		BootstrapTalosInstaller: "docker.io/autonomy/installer:v0.7.0-alpha.2",
 
-		TalosKernelURL: "https://github.com/talos-systems/talos/releases/download/v0.7.0-alpha.1/vmlinuz",
-		TalosInitrdURL: "https://github.com/talos-systems/talos/releases/download/v0.7.0-alpha.1/initramfs.xz",
+		TalosKernelURL: "https://github.com/talos-systems/talos/releases/download/v0.7.0-alpha.2/vmlinuz",
+		TalosInitrdURL: "https://github.com/talos-systems/talos/releases/download/v0.7.0-alpha.2/initramfs.xz",
+		TalosInstaller: "docker.io/autonomy/installer:v0.7.0-alpha.2",
 
 		BootstrapProviders:      []string{"talos"},
 		InfrastructureProviders: []string{"sidero"},

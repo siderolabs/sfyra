@@ -11,9 +11,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/talos-systems/go-procfs/procfs"
+	"github.com/talos-systems/go-retry/retry"
 	"github.com/talos-systems/sidero/app/metal-controller-manager/api/v1alpha1"
 	"github.com/talos-systems/sidero/app/metal-controller-manager/pkg/client"
-	"github.com/talos-systems/talos/pkg/retry"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 )

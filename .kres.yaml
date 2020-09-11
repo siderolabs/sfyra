@@ -58,7 +58,7 @@ spec:
       - $(ARTIFACTS)/$(TALOS_RELEASE)
     variables:
       - name: TALOS_RELEASE
-        defaultValue: v0.7.0-alpha.1
+        defaultValue: v0.7.0-alpha.2
 ---
 kind: custom.Step
 name: run-integration-test

@@ -12,9 +12,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/talos-systems/go-retry/retry"
 	"github.com/talos-systems/sidero/app/metal-controller-manager/api/v1alpha1"
 	"github.com/talos-systems/sidero/app/metal-controller-manager/pkg/client"
-	"github.com/talos-systems/talos/pkg/retry"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 )
@@ -52,14 +52,14 @@ func (suite *TestSuite) TestServerClassDefault(t *testing.T) {
 			return retry.UnexpectedError(err)
 		}
 
-		if len(serverClass.Status.ServersAvailable) != suite.options.Nodes {
-			return retry.ExpectedError(fmt.Errorf("%d != %d", len(serverClass.Status.ServersAvailable), suite.options.Nodes))
+		if len(serverClass.Status.ServersAvailable)+len(serverClass.Status.ServersInUse) != suite.options.Nodes {
+			return retry.ExpectedError(fmt.Errorf("%d + %d != %d", len(serverClass.Status.ServersAvailable), len(serverClass.Status.ServersInUse), suite.options.Nodes))
 		}
 
 		return nil
 	}))
 
-	assert.Len(t, serverClass.Status.ServersAvailable, suite.options.Nodes)
+	assert.Len(t, append(serverClass.Status.ServersAvailable, serverClass.Status.ServersInUse...), suite.options.Nodes)
 
 	nodes := suite.bootstrapCluster.Nodes()
 	expectedUUIDs := make([]string, len(nodes))
@@ -68,7 +68,7 @@ func (suite *TestSuite) TestServerClassDefault(t *testing.T) {
 		expectedUUIDs[i] = nodes[i].UUID.String()
 	}
 
-	actualUUIDs := append([]string(nil), serverClass.Status.ServersAvailable...)
+	actualUUIDs := append(serverClass.Status.ServersAvailable, serverClass.Status.ServersInUse...)
 
 	sort.Strings(expectedUUIDs)
 	sort.Strings(actualUUIDs)

@@ -6,17 +6,25 @@ package setup
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 
+	cabpt "github.com/talos-systems/cluster-api-bootstrap-provider-talos/api/v1alpha3"
+	cacpt "github.com/talos-systems/cluster-api-control-plane-provider-talos/api/v1alpha3"
+	sidero "github.com/talos-systems/sidero/app/cluster-api-provider-sidero/api/v1alpha3"
+	metal "github.com/talos-systems/sidero/app/metal-controller-manager/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/strategicpatch"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
-	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
+	"sigs.k8s.io/cluster-api/api/v1alpha3"
 	"sigs.k8s.io/cluster-api/cmd/clusterctl/client"
+	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/talos-systems/sfyra/pkg/config"
 )
@@ -27,9 +35,10 @@ type ClusterAPI struct {
 
 	bootstrapCluster *BootstrapCluster
 
-	kubeconfig client.Kubeconfig
-	client     client.Client
-	clientset  *kubernetes.Clientset
+	kubeconfig    client.Kubeconfig
+	client        client.Client
+	clientset     *kubernetes.Clientset
+	runtimeClient runtimeclient.Client
 }
 
 // NewClusterAPI creates new ClusterAPI object.
@@ -54,17 +63,13 @@ func NewClusterAPI(ctx context.Context, options *config.Options, bootstrapCluste
 	return clusterAPI, nil
 }
 
-func (clusterAPI *ClusterAPI) getKubeconfig(ctx context.Context) (client.Kubeconfig, error) {
+// GetKubeconfig returns kubeconfig in clusterctl expected format.
+func (clusterAPI *ClusterAPI) GetKubeconfig(ctx context.Context) (client.Kubeconfig, error) {
 	if clusterAPI.kubeconfig.Path != "" {
 		return clusterAPI.kubeconfig, nil
 	}
 
-	talosClient, err := clusterAPI.bootstrapCluster.Access().Client()
-	if err != nil {
-		return client.Kubeconfig{}, err
-	}
-
-	kubeconfigBytes, err := talosClient.Kubeconfig(ctx)
+	kubeconfigBytes, err := clusterAPI.bootstrapCluster.Access().Kubeconfig(ctx)
 	if err != nil {
 		return client.Kubeconfig{}, err
 	}
@@ -86,22 +91,56 @@ func (clusterAPI *ClusterAPI) getKubeconfig(ctx context.Context) (client.Kubecon
 }
 
 // GetRestConfig returns parsed Kubernetes config.
-//
-// TODO: this should be moved to Talos access adapter.
 func (clusterAPI *ClusterAPI) GetRestConfig(ctx context.Context) (*rest.Config, error) {
-	kubeconfig, err := clusterAPI.getKubeconfig(ctx)
+	return clusterAPI.bootstrapCluster.Access().K8sRestConfig(ctx)
+}
+
+// GetClusterAPIClient client returns instance of cluster API client.
+func (clusterAPI *ClusterAPI) GetClusterAPIClient() client.Client {
+	return clusterAPI.client
+}
+
+// GetMetalClient returns k8s client stuffed with CAPI CRDs.
+func (clusterAPI *ClusterAPI) GetMetalClient(ctx context.Context) (runtimeclient.Client, error) {
+	if clusterAPI.runtimeClient != nil {
+		return clusterAPI.runtimeClient, nil
+	}
+
+	config, err := clusterAPI.GetRestConfig(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	return clientcmd.BuildConfigFromKubeconfigGetter("", func() (*clientcmdapi.Config, error) {
-		return clientcmd.LoadFromFile(kubeconfig.Path)
-	})
+	scheme := runtime.NewScheme()
+
+	if err = v1alpha3.AddToScheme(scheme); err != nil {
+		return nil, err
+	}
+
+	if err = cacpt.AddToScheme(scheme); err != nil {
+		return nil, err
+	}
+
+	if err = cabpt.AddToScheme(scheme); err != nil {
+		return nil, err
+	}
+
+	if err = sidero.AddToScheme(scheme); err != nil {
+		return nil, err
+	}
+
+	if err = metal.AddToScheme(scheme); err != nil {
+		return nil, err
+	}
+
+	clusterAPI.runtimeClient, err = runtimeclient.New(config, runtimeclient.Options{Scheme: scheme})
+
+	return clusterAPI.runtimeClient, err
 }
 
 // Install the ClusterAPI components and wait for them to be ready.
 func (clusterAPI *ClusterAPI) Install(ctx context.Context) error {
-	kubeconfig, err := clusterAPI.getKubeconfig(ctx)
+	kubeconfig, err := clusterAPI.GetKubeconfig(ctx)
 	if err != nil {
 		return err
 	}
@@ -141,18 +180,48 @@ func (clusterAPI *ClusterAPI) patch(ctx context.Context) error {
 		return err
 	}
 
-	deployment.Spec.Template.Spec.Containers[0].Args = append(deployment.Spec.Template.Spec.Containers[0].Args, "--port=9091")
+	oldDeployment, err := json.Marshal(deployment)
+	if err != nil {
+		return err
+	}
+
+	argsPatched := false
+
+	for _, arg := range deployment.Spec.Template.Spec.Containers[0].Args {
+		if arg == "--port=9091" {
+			argsPatched = true
+		}
+	}
+
+	if !argsPatched {
+		deployment.Spec.Template.Spec.Containers[0].Args = append(deployment.Spec.Template.Spec.Containers[0].Args, "--port=9091")
+	}
+
 	deployment.Spec.Template.Spec.Containers[0].Ports = []corev1.ContainerPort{
 		{
 			ContainerPort: 9091,
+			HostPort:      9091,
 			Name:          "http",
+			Protocol:      corev1.ProtocolTCP,
 		},
 	}
 	deployment.Spec.Template.Spec.HostNetwork = true
 	deployment.Spec.Strategy.RollingUpdate = nil
 	deployment.Spec.Strategy.Type = appsv1.RecreateDeploymentStrategyType
 
-	_, err = clusterAPI.clientset.AppsV1().Deployments(sideroNamespace).Update(ctx, deployment, metav1.UpdateOptions{})
+	newDeployment, err := json.Marshal(deployment)
+	if err != nil {
+		return err
+	}
+
+	patchBytes, err := strategicpatch.CreateTwoWayMergePatch(oldDeployment, newDeployment, appsv1.Deployment{})
+	if err != nil {
+		return fmt.Errorf("failed to create two way merge patch: %w", err)
+	}
+
+	_, err = clusterAPI.clientset.AppsV1().Deployments(sideroNamespace).Patch(ctx, deployment.Name, types.StrategicMergePatchType, patchBytes, metav1.PatchOptions{
+		FieldManager: "sfyra",
+	})
 	if err != nil {
 		return err
 	}
@@ -163,13 +232,41 @@ func (clusterAPI *ClusterAPI) patch(ctx context.Context) error {
 		return err
 	}
 
-	deployment.Spec.Template.Spec.Containers[1].Args = append(deployment.Spec.Template.Spec.Containers[1].Args,
-		fmt.Sprintf("--api-endpoint=%s", clusterAPI.bootstrapCluster.MasterIP()), "--metrics-addr=127.0.0.1:8080", "--enable-leader-election")
+	oldDeployment, err = json.Marshal(deployment)
+	if err != nil {
+		return err
+	}
+
+	argsPatched = false
+
+	for _, arg := range deployment.Spec.Template.Spec.Containers[1].Args {
+		if arg == "--metrics-addr=127.0.0.1:8080" {
+			argsPatched = true
+		}
+	}
+
+	if !argsPatched {
+		deployment.Spec.Template.Spec.Containers[1].Args = append(deployment.Spec.Template.Spec.Containers[1].Args,
+			fmt.Sprintf("--api-endpoint=%s", clusterAPI.bootstrapCluster.MasterIP()), "--metrics-addr=127.0.0.1:8080", "--enable-leader-election")
+	}
+
 	deployment.Spec.Template.Spec.HostNetwork = true
 	deployment.Spec.Strategy.RollingUpdate = nil
 	deployment.Spec.Strategy.Type = appsv1.RecreateDeploymentStrategyType
 
-	_, err = clusterAPI.clientset.AppsV1().Deployments(sideroNamespace).Update(ctx, deployment, metav1.UpdateOptions{})
+	newDeployment, err = json.Marshal(deployment)
+	if err != nil {
+		return err
+	}
+
+	patchBytes, err = strategicpatch.CreateTwoWayMergePatch(oldDeployment, newDeployment, appsv1.Deployment{})
+	if err != nil {
+		return fmt.Errorf("failed to create two way merge patch: %w", err)
+	}
+
+	_, err = clusterAPI.clientset.AppsV1().Deployments(sideroNamespace).Patch(ctx, deployment.Name, types.StrategicMergePatchType, patchBytes, metav1.PatchOptions{
+		FieldManager: "sfyra",
+	})
 	if err != nil {
 		return err
 	}
