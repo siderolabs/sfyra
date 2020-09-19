@@ -40,7 +40,6 @@ func (suite *TestSuite) TestServerClassDefault(t *testing.T) {
 		serverClass.Name = serverClassName
 		serverClass.Spec.Qualifiers.CPU = append(serverClass.Spec.Qualifiers.CPU, v1alpha1.CPUInformation{
 			Manufacturer: "QEMU",
-			Version:      "pc-q35-4.2",
 		})
 
 		require.NoError(t, metalClient.Create(suite.ctx, &serverClass))
