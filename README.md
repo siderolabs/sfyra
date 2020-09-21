@@ -18,6 +18,7 @@ Test uses CIDR `172.24.0.0/24` by default.
 Sequence of steps:
 
 * build initial bootstrap Talos cluster of one node
+* build management set of VMs (PXE-boot enabled)
 * install Cluster API, Sidero and Talos providers
 * run the unit-tests
 
@@ -39,6 +40,7 @@ This command doesn't tear down the cluster after the test run, so it can be re-r
 To destroy Sfyra environment use `talosctl`:
 
     sudo -E talosctl cluster destroy --provisioner=qemu --name=sfyra
+    sudo -E talosctl cluster destroy --provisioner=qemu --name=sfyra-management
 
 ## Running with Sidero HEAD
 

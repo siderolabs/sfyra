@@ -2,12 +2,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-package setup
+package bootstrap
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	talosnet "github.com/talos-systems/net"
+	taloscluster "github.com/talos-systems/talos/pkg/cluster"
 	"github.com/talos-systems/talos/pkg/cluster/check"
 	clientconfig "github.com/talos-systems/talos/pkg/machinery/client/config"
 	"github.com/talos-systems/talos/pkg/machinery/config/types/v1alpha1/bundle"
@@ -27,28 +29,45 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/strategicpatch"
 
-	"github.com/talos-systems/sfyra/pkg/config"
+	"github.com/talos-systems/sfyra/pkg/constants"
 )
 
-// BootstrapCluster sets up initial Talos cluster.
-type BootstrapCluster struct {
-	Options *config.Options
+// Cluster sets up initial Talos cluster.
+type Cluster struct {
+	options Options
 
 	provisioner provision.Provisioner
 	cluster     provision.Cluster
 	access      *access.Adapter
 
-	gatewayIP net.IP
-	masterIP  net.IP
+	bridgeIP net.IP
+	masterIP net.IP
 
 	stateDir   string
 	configPath string
 }
 
-// NewBootstrapCluster creates BootstrapCluster.
-func NewBootstrapCluster(ctx context.Context, options *config.Options) (*BootstrapCluster, error) {
-	cluster := &BootstrapCluster{
-		Options: options,
+// Options for the bootstrap cluster.
+type Options struct {
+	Name string
+	CIDR string
+
+	Vmlinuz, Initramfs string
+	InstallerImage     string
+
+	TalosctlPath string
+
+	RegistryMirrors []string
+
+	MemMB  int64
+	CPUs   int64
+	DiskGB int64
+}
+
+// NewCluster creates new bootstrap Talos cluster.
+func NewCluster(ctx context.Context, options Options) (*Cluster, error) {
+	cluster := &Cluster{
+		options: options,
 	}
 
 	var err error
@@ -62,7 +81,7 @@ func NewBootstrapCluster(ctx context.Context, options *config.Options) (*Bootstr
 }
 
 // Setup the bootstrap cluster.
-func (cluster *BootstrapCluster) Setup(ctx context.Context) error {
+func (cluster *Cluster) Setup(ctx context.Context) error {
 	var err error
 
 	cluster.configPath, err = clientconfig.GetDefaultPath()
@@ -75,9 +94,11 @@ func (cluster *BootstrapCluster) Setup(ctx context.Context) error {
 		return err
 	}
 
+	log.Printf("cluster.options = %v", cluster.options)
+
 	cluster.stateDir = filepath.Join(defaultStateDir, "clusters")
 
-	fmt.Printf("bootstrap cluster state directory: %s, name: %s\n", cluster.stateDir, cluster.Options.BootstrapClusterName)
+	fmt.Printf("bootstrap cluster state directory: %s, name: %s\n", cluster.stateDir, cluster.options.Name)
 
 	if err = cluster.findExisting(ctx); err != nil {
 		fmt.Printf("bootstrap cluster not found: %s, creating new one\n", err)
@@ -99,10 +120,10 @@ func (cluster *BootstrapCluster) Setup(ctx context.Context) error {
 	return cluster.untaint(ctx)
 }
 
-func (cluster *BootstrapCluster) findExisting(ctx context.Context) error {
+func (cluster *Cluster) findExisting(ctx context.Context) error {
 	var err error
 
-	cluster.cluster, err = cluster.provisioner.Reflect(ctx, cluster.Options.BootstrapClusterName, cluster.stateDir)
+	cluster.cluster, err = cluster.provisioner.Reflect(ctx, cluster.options.Name, cluster.stateDir)
 	if err != nil {
 		return err
 	}
@@ -112,14 +133,14 @@ func (cluster *BootstrapCluster) findExisting(ctx context.Context) error {
 		return err
 	}
 
-	config.Context = cluster.Options.BootstrapClusterName
+	config.Context = cluster.options.Name
 
-	_, cidr, err := net.ParseCIDR(cluster.Options.CIDR)
+	_, cidr, err := net.ParseCIDR(cluster.options.CIDR)
 	if err != nil {
 		return err
 	}
 
-	cluster.gatewayIP, err = talosnet.NthIPInNetwork(cidr, 1)
+	cluster.bridgeIP, err = talosnet.NthIPInNetwork(cidr, 1)
 	if err != nil {
 		return err
 	}
@@ -134,46 +155,42 @@ func (cluster *BootstrapCluster) findExisting(ctx context.Context) error {
 	return nil
 }
 
-func (cluster *BootstrapCluster) create(ctx context.Context) error {
-	_, cidr, err := net.ParseCIDR(cluster.Options.CIDR)
+func (cluster *Cluster) create(ctx context.Context) error {
+	_, cidr, err := net.ParseCIDR(cluster.options.CIDR)
 	if err != nil {
 		return err
 	}
 
-	cluster.gatewayIP, err = talosnet.NthIPInNetwork(cidr, 1)
+	cluster.bridgeIP, err = talosnet.NthIPInNetwork(cidr, 1)
 	if err != nil {
 		return err
 	}
 
-	ips := make([]net.IP, 1+cluster.Options.Nodes)
-
-	for i := range ips {
-		ips[i], err = talosnet.NthIPInNetwork(cidr, i+2)
-		if err != nil {
-			return err
-		}
+	cluster.masterIP, err = talosnet.NthIPInNetwork(cidr, 2)
+	if err != nil {
+		return err
 	}
 
 	request := provision.ClusterRequest{
-		Name: cluster.Options.BootstrapClusterName,
+		Name: cluster.options.Name,
 
 		Network: provision.NetworkRequest{
-			Name:        cluster.Options.BootstrapClusterName,
+			Name:        cluster.options.Name,
 			CIDR:        *cidr,
-			GatewayAddr: cluster.gatewayIP,
-			MTU:         1500,
-			Nameservers: defaultNameservers,
+			GatewayAddr: cluster.bridgeIP,
+			MTU:         constants.MTU,
+			Nameservers: constants.Nameservers,
 			CNI: provision.CNIConfig{
-				BinPath:  defaultCNIBinPath,
-				ConfDir:  defaultCNIConfDir,
-				CacheDir: defaultCNICacheDir,
+				BinPath:  constants.CNIBinPath,
+				ConfDir:  constants.CNIConfDir,
+				CacheDir: constants.CNICacheDir,
 			},
 		},
 
-		KernelPath:    cluster.Options.BootstrapTalosVmlinuz,
-		InitramfsPath: cluster.Options.BootstrapTalosInitramfs,
+		KernelPath:    cluster.options.Vmlinuz,
+		InitramfsPath: cluster.options.Initramfs,
 
-		SelfExecutable: cluster.Options.TalosctlPath,
+		SelfExecutable: cluster.options.TalosctlPath,
 		StateDirectory: cluster.stateDir,
 	}
 
@@ -181,7 +198,7 @@ func (cluster *BootstrapCluster) create(ctx context.Context) error {
 
 	genOptions := cluster.provisioner.GenOptions(request.Network)
 
-	for _, registryMirror := range cluster.Options.RegistryMirrors {
+	for _, registryMirror := range cluster.options.RegistryMirrors {
 		parts := strings.SplitN(registryMirror, "=", 2)
 		if len(parts) != 2 {
 			return fmt.Errorf("unexpected registry mirror format: %q", registryMirror)
@@ -190,17 +207,16 @@ func (cluster *BootstrapCluster) create(ctx context.Context) error {
 		genOptions = append(genOptions, generate.WithRegistryMirror(parts[0], parts[1]))
 	}
 
-	cluster.masterIP = ips[0]
-	masterEndpoint := ips[0].String()
+	masterEndpoint := cluster.masterIP.String()
 
 	configBundle, err := bundle.NewConfigBundle(bundle.WithInputOptions(
 		&bundle.InputOptions{
-			ClusterName: cluster.Options.BootstrapClusterName,
+			ClusterName: cluster.options.Name,
 			Endpoint:    fmt.Sprintf("https://%s:6443", defaultInternalLB),
 			GenOptions: append(
 				genOptions,
 				generate.WithEndpointList([]string{masterEndpoint}),
-				generate.WithInstallImage(cluster.Options.BootstrapTalosInstaller),
+				generate.WithInstallImage(cluster.options.InstallerImage),
 			),
 		}))
 	if err != nil {
@@ -209,27 +225,13 @@ func (cluster *BootstrapCluster) create(ctx context.Context) error {
 
 	request.Nodes = append(request.Nodes,
 		provision.NodeRequest{
-			Name:     bootstrapMaster,
-			IP:       ips[0],
-			Memory:   cluster.Options.MemMB * 1024 * 1024,
-			NanoCPUs: cluster.Options.CPUs * 1000 * 1000 * 1000,
-			DiskSize: cluster.Options.DiskGB * 1024 * 1024 * 1024,
+			Name:     constants.BootstrapMaster,
+			IP:       cluster.masterIP,
+			Memory:   cluster.options.MemMB * 1024 * 1024,
+			NanoCPUs: cluster.options.CPUs * 1000 * 1000 * 1000,
+			DiskSize: cluster.options.DiskGB * 1024 * 1024 * 1024,
 			Config:   configBundle.ControlPlane(),
 		})
-
-	for i := 0; i < cluster.Options.Nodes; i++ {
-		request.Nodes = append(request.Nodes,
-			provision.NodeRequest{
-				Name:             fmt.Sprintf("pxe-%d", i),
-				IP:               ips[i+1],
-				Memory:           cluster.Options.MemMB * 1024 * 1024,
-				NanoCPUs:         cluster.Options.CPUs * 1000 * 1000 * 1000,
-				DiskSize:         cluster.Options.DiskGB * 1024 * 1024 * 1024,
-				PXEBooted:        true,
-				TFTPServer:       masterEndpoint,
-				IPXEBootFilename: fmt.Sprintf("http://%s:8081/boot.ipxe", masterEndpoint),
-			})
-	}
 
 	cluster.cluster, err = cluster.provisioner.Create(ctx, request,
 		provision.WithBootlader(true),
@@ -261,13 +263,13 @@ func (cluster *BootstrapCluster) create(ctx context.Context) error {
 	return nil
 }
 
-func (cluster *BootstrapCluster) untaint(ctx context.Context) error {
+func (cluster *Cluster) untaint(ctx context.Context) error {
 	clientset, err := cluster.access.K8sClient(ctx)
 	if err != nil {
 		return err
 	}
 
-	n, err := clientset.CoreV1().Nodes().Get(ctx, bootstrapMaster, metav1.GetOptions{})
+	n, err := clientset.CoreV1().Nodes().Get(ctx, constants.BootstrapMaster, metav1.GetOptions{})
 	if err != nil {
 		return err
 	}
@@ -297,7 +299,7 @@ func (cluster *BootstrapCluster) untaint(ctx context.Context) error {
 }
 
 // TearDown the bootstrap cluster.
-func (cluster *BootstrapCluster) TearDown(ctx context.Context) error {
+func (cluster *Cluster) TearDown(ctx context.Context) error {
 	if cluster.cluster != nil {
 		if err := cluster.provisioner.Destroy(ctx, cluster.cluster); err != nil {
 			return err
@@ -309,22 +311,22 @@ func (cluster *BootstrapCluster) TearDown(ctx context.Context) error {
 	return nil
 }
 
-// Access returns cluster access adapter.
-func (cluster *BootstrapCluster) Access() *access.Adapter {
-	return cluster.access
+// KubernetesClient returns k8s client access adapter.
+func (cluster *Cluster) KubernetesClient() taloscluster.K8sProvider {
+	return &cluster.access.KubernetesClient
 }
 
-// MasterIP returns the IP of the master node.
-func (cluster *BootstrapCluster) MasterIP() net.IP {
+// SideroComponentsIP returns the IP of the master node.
+func (cluster *Cluster) SideroComponentsIP() net.IP {
 	return cluster.masterIP
 }
 
-// GatewayIP returns the IP of the gateway (bridge).
-func (cluster *BootstrapCluster) GatewayIP() net.IP {
-	return cluster.gatewayIP
+// BridgeIP returns the IP of the gateway (bridge).
+func (cluster *Cluster) BridgeIP() net.IP {
+	return cluster.bridgeIP
 }
 
-// Nodes return information about PXE VMs.
-func (cluster *BootstrapCluster) Nodes() []provision.NodeInfo {
-	return cluster.cluster.Info().ExtraNodes
+// Name returns cluster name.
+func (cluster *Cluster) Name() string {
+	return cluster.cluster.Info().ClusterName
 }

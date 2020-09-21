@@ -783,6 +783,8 @@ github.com/talos-systems/bootkube-plugin v0.0.0-20200915135634-229d57e818f3 h1:L
 github.com/talos-systems/bootkube-plugin v0.0.0-20200915135634-229d57e818f3/go.mod h1:AbdJAgHK5rJNDPUN3msPTfQJSR9b4DKb5xNN07uG8/Y=
 github.com/talos-systems/cluster-api-bootstrap-provider-talos v0.2.0-alpha.0 h1:ouJLrCqoFVhuLryJ7uOuSjRV9rGJGYeIg0E/eugSidk=
 github.com/talos-systems/cluster-api-bootstrap-provider-talos v0.2.0-alpha.0/go.mod h1:xRmGKG3pecB8gcTpVY5WUBdJlkMbp2gFzXsJqMnEX/o=
+github.com/talos-systems/cluster-api-bootstrap-provider-talos v0.2.0-alpha.3 h1:DS+roe+Lp0txFCgag6J1JiHqTuGJ6+hz51cJ7ggCeyQ=
+github.com/talos-systems/cluster-api-bootstrap-provider-talos v0.2.0-alpha.3/go.mod h1:SuiA9XQD/qKBDWT0RixeoMSboWRHXC+yordci/ju0PA=
 github.com/talos-systems/cluster-api-control-plane-provider-talos v0.1.0-alpha.2 h1:iC/EOKLUx5tAinYQMSb2KJMdjiGkpZBefAOLDQd72Vo=
 github.com/talos-systems/cluster-api-control-plane-provider-talos v0.1.0-alpha.2/go.mod h1:m5K+m8E26iIaN66ZNE3QMTSRVovBfQgY/2GyrRr6eC0=
 github.com/talos-systems/crypto v0.2.0 h1:UwT8uhJ0eDlklY0vYwo1+LGoFgiqkPqjQnae6j8UNYE=
@@ -798,12 +800,15 @@ github.com/talos-systems/go-smbios v0.0.0-20200219201045-94b8c4e489ee/go.mod h1:
 github.com/talos-systems/grpc-proxy v0.2.0/go.mod h1:sm97Vc/z2cok3pu6ruNeszQej4KDxFrDgfWs4C1mtC4=
 github.com/talos-systems/net v0.1.0 h1:fEgj3xbH+lIopFGnk/4CaV4QvFG2kQXs/t+pfeZGmCc=
 github.com/talos-systems/net v0.1.0/go.mod h1:VreSAyRmxMtqussAHSKMKkJQa1YwBTSVfkmE4Jydam4=
+github.com/talos-systems/net v0.2.0 h1:QJ2ofYboG1Zjew9b+3RAjtLIfL0mIONGuc6/LyO68MM=
+github.com/talos-systems/net v0.2.0/go.mod h1:VreSAyRmxMtqussAHSKMKkJQa1YwBTSVfkmE4Jydam4=
 github.com/talos-systems/sidero v0.1.0-alpha.1.0.20200915181156-11a0a80e3d8b h1:nOaKxGZnkMcyjub/JLtv40IFNSWXrGL4WScU6XXiIN8=
 github.com/talos-systems/sidero v0.1.0-alpha.1.0.20200915181156-11a0a80e3d8b/go.mod h1:3R81hA6lD/dAmIT+cnciYDRWxbr1Kh4eas29idklf0c=
 github.com/talos-systems/talos v0.4.0-alpha.5/go.mod h1:us9WxsoZPKS7R8d2/NIjW6Ot3h2LUUAx6qyenmRy6Ws=
 github.com/talos-systems/talos v0.5.0/go.mod h1:qZ7ygCdmh9SPT1Z+QGN/ZxJw5VJ7KphnJEtlfCwka1Y=
 github.com/talos-systems/talos v0.7.0-alpha.1.0.20200916165852-41ecb826469a h1:RQAWPBAy82azFW71LMAOd7d5V7jd55TXx+7R2ZmKcs0=
 github.com/talos-systems/talos v0.7.0-alpha.1.0.20200916165852-41ecb826469a/go.mod h1:E/Ik6qqjlj5j68PeD3PCrmRyHXseBIPeUNL3WYhbLvU=
+github.com/talos-systems/talos/pkg/machinery v0.0.0-20200817172914-fca19cb8be2e/go.mod h1:Bj+0EE3f8TAzwATsZFzQMxRBiPHDFXwCOCkiYXlum3w=
 github.com/talos-systems/talos/pkg/machinery v0.0.0-20200818212414-6a7cc0264819 h1:8nCKXwGdaK5r7DOKGRnDTimq5EHFiyINABPvqxC+Bmg=
 github.com/talos-systems/talos/pkg/machinery v0.0.0-20200818212414-6a7cc0264819/go.mod h1:Bj+0EE3f8TAzwATsZFzQMxRBiPHDFXwCOCkiYXlum3w=
 github.com/talos-systems/talos/pkg/machinery v0.0.0-20200916165852-41ecb826469a h1:nVtitb80o7dNmMdDCMAqkiGLnEfEvbd3rLCmAXl90xY=

@@ -2,7 +2,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-package setup
+// Package capi manages CAPI installation, provides default client for CAPI CRDs.
+package capi
 
 import (
 	"context"
@@ -21,19 +22,18 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/strategicpatch"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 	"sigs.k8s.io/cluster-api/api/v1alpha3"
 	"sigs.k8s.io/cluster-api/cmd/clusterctl/client"
 	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/talos-systems/sfyra/pkg/config"
+	"github.com/talos-systems/sfyra/pkg/talos"
 )
 
-// ClusterAPI installs and manages cluster API installation.
-type ClusterAPI struct {
-	Options *config.Options
+// Manager installs and controls cluster API installation.
+type Manager struct {
+	options Options
 
-	bootstrapCluster *BootstrapCluster
+	cluster talos.Cluster
 
 	kubeconfig    client.Kubeconfig
 	client        client.Client
@@ -41,11 +41,18 @@ type ClusterAPI struct {
 	runtimeClient runtimeclient.Client
 }
 
-// NewClusterAPI creates new ClusterAPI object.
-func NewClusterAPI(ctx context.Context, options *config.Options, bootstrapCluster *BootstrapCluster) (*ClusterAPI, error) {
-	clusterAPI := &ClusterAPI{
-		Options:          options,
-		bootstrapCluster: bootstrapCluster,
+// Options for the CAPI installer.
+type Options struct {
+	BootstrapProviders      []string
+	InfrastructureProviders []string
+	ControlPlaneProviders   []string
+}
+
+// NewManager creates new Manager object.
+func NewManager(ctx context.Context, cluster talos.Cluster, options Options) (*Manager, error) {
+	clusterAPI := &Manager{
+		options: options,
+		cluster: cluster,
 	}
 
 	var err error
@@ -55,7 +62,7 @@ func NewClusterAPI(ctx context.Context, options *config.Options, bootstrapCluste
 		return nil, err
 	}
 
-	clusterAPI.clientset, err = clusterAPI.bootstrapCluster.Access().K8sClient(ctx)
+	clusterAPI.clientset, err = clusterAPI.cluster.KubernetesClient().K8sClient(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -64,12 +71,12 @@ func NewClusterAPI(ctx context.Context, options *config.Options, bootstrapCluste
 }
 
 // GetKubeconfig returns kubeconfig in clusterctl expected format.
-func (clusterAPI *ClusterAPI) GetKubeconfig(ctx context.Context) (client.Kubeconfig, error) {
+func (clusterAPI *Manager) GetKubeconfig(ctx context.Context) (client.Kubeconfig, error) {
 	if clusterAPI.kubeconfig.Path != "" {
 		return clusterAPI.kubeconfig, nil
 	}
 
-	kubeconfigBytes, err := clusterAPI.bootstrapCluster.Access().Kubeconfig(ctx)
+	kubeconfigBytes, err := clusterAPI.cluster.KubernetesClient().Kubeconfig(ctx)
 	if err != nil {
 		return client.Kubeconfig{}, err
 	}
@@ -85,28 +92,23 @@ func (clusterAPI *ClusterAPI) GetKubeconfig(ctx context.Context) (client.Kubecon
 	}
 
 	clusterAPI.kubeconfig.Path = tmpFile.Name()
-	clusterAPI.kubeconfig.Context = "admin@" + clusterAPI.Options.BootstrapClusterName
+	clusterAPI.kubeconfig.Context = "admin@" + clusterAPI.cluster.Name()
 
 	return clusterAPI.kubeconfig, nil
 }
 
-// GetRestConfig returns parsed Kubernetes config.
-func (clusterAPI *ClusterAPI) GetRestConfig(ctx context.Context) (*rest.Config, error) {
-	return clusterAPI.bootstrapCluster.Access().K8sRestConfig(ctx)
-}
-
-// GetClusterAPIClient client returns instance of cluster API client.
-func (clusterAPI *ClusterAPI) GetClusterAPIClient() client.Client {
+// GetManagerClient client returns instance of cluster API client.
+func (clusterAPI *Manager) GetManagerClient() client.Client {
 	return clusterAPI.client
 }
 
 // GetMetalClient returns k8s client stuffed with CAPI CRDs.
-func (clusterAPI *ClusterAPI) GetMetalClient(ctx context.Context) (runtimeclient.Client, error) {
+func (clusterAPI *Manager) GetMetalClient(ctx context.Context) (runtimeclient.Client, error) {
 	if clusterAPI.runtimeClient != nil {
 		return clusterAPI.runtimeClient, nil
 	}
 
-	config, err := clusterAPI.GetRestConfig(ctx)
+	config, err := clusterAPI.cluster.KubernetesClient().K8sRestConfig(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -138,8 +140,8 @@ func (clusterAPI *ClusterAPI) GetMetalClient(ctx context.Context) (runtimeclient
 	return clusterAPI.runtimeClient, err
 }
 
-// Install the ClusterAPI components and wait for them to be ready.
-func (clusterAPI *ClusterAPI) Install(ctx context.Context) error {
+// Install the Manager components and wait for them to be ready.
+func (clusterAPI *Manager) Install(ctx context.Context) error {
 	kubeconfig, err := clusterAPI.GetKubeconfig(ctx)
 	if err != nil {
 		return err
@@ -148,9 +150,9 @@ func (clusterAPI *ClusterAPI) Install(ctx context.Context) error {
 	options := client.InitOptions{
 		Kubeconfig:              kubeconfig,
 		CoreProvider:            "",
-		BootstrapProviders:      clusterAPI.Options.BootstrapProviders,
-		ControlPlaneProviders:   clusterAPI.Options.ControlPlaneProviders,
-		InfrastructureProviders: clusterAPI.Options.InfrastructureProviders,
+		BootstrapProviders:      clusterAPI.options.BootstrapProviders,
+		ControlPlaneProviders:   clusterAPI.options.ControlPlaneProviders,
+		InfrastructureProviders: clusterAPI.options.InfrastructureProviders,
 		TargetNamespace:         "",
 		WatchingNamespace:       "",
 		LogUsageInstructions:    false,
@@ -167,7 +169,7 @@ func (clusterAPI *ClusterAPI) Install(ctx context.Context) error {
 	return clusterAPI.patch(ctx)
 }
 
-func (clusterAPI *ClusterAPI) patch(ctx context.Context) error {
+func (clusterAPI *Manager) patch(ctx context.Context) error {
 	const (
 		sideroNamespace         = "sidero-system"
 		sideroMetadataServer    = "sidero-metadata-server"
@@ -247,7 +249,7 @@ func (clusterAPI *ClusterAPI) patch(ctx context.Context) error {
 
 	if !argsPatched {
 		deployment.Spec.Template.Spec.Containers[1].Args = append(deployment.Spec.Template.Spec.Containers[1].Args,
-			fmt.Sprintf("--api-endpoint=%s", clusterAPI.bootstrapCluster.MasterIP()), "--metrics-addr=127.0.0.1:8080", "--enable-leader-election")
+			fmt.Sprintf("--api-endpoint=%s", clusterAPI.cluster.SideroComponentsIP()), "--metrics-addr=127.0.0.1:8080", "--enable-leader-election")
 	}
 
 	deployment.Spec.Template.Spec.HostNetwork = true
