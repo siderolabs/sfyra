@@ -7,57 +7,62 @@ package tests
 
 import (
 	"context"
+	"log"
 	"testing"
 
-	"github.com/talos-systems/sfyra/pkg/config"
-	"github.com/talos-systems/sfyra/pkg/setup"
+	"github.com/talos-systems/sfyra/pkg/capi"
+	"github.com/talos-systems/sfyra/pkg/talos"
+	"github.com/talos-systems/sfyra/pkg/vm"
 )
 
-// TestSuite combines all the integration tests.
-type TestSuite struct {
-	ctx              context.Context
-	options          *config.Options
-	bootstrapCluster *setup.BootstrapCluster
-	clusterAPI       *setup.ClusterAPI
+// TestFunc is a testing function prototype.
+type TestFunc func(t *testing.T)
+
+// Options for the test.
+type Options struct {
+	KernelURL, InitrdURL string
+	InstallerImage       string
+
+	RegistryMirrors []string
 }
 
 // Run all the tests.
-func Run(ctx context.Context, options *config.Options, bootstrapCluster *setup.BootstrapCluster, clusterAPI *setup.ClusterAPI) (ok bool) {
-	suite := &TestSuite{
-		ctx:              ctx,
-		options:          options,
-		bootstrapCluster: bootstrapCluster,
-		clusterAPI:       clusterAPI,
+func Run(ctx context.Context, cluster talos.Cluster, vmSet *vm.Set, capiManager *capi.Manager, options Options) (ok bool) {
+	metalClient, err := capiManager.GetMetalClient(ctx)
+	if err != nil {
+		log.Printf("error creating metalClient: %s", err)
+
+		return false
 	}
 
 	return testing.MainStart(matchStringOnly(func(pat, str string) (bool, error) { return true, nil }), []testing.InternalTest{
 		{
 			"TestServerRegistration",
-			suite.TestServerRegistration,
+			TestServerRegistration(ctx, metalClient, vmSet),
 		},
 		{
 			"TestServerMgmtAPI",
-			suite.TestServerMgmtAPI,
+			TestServerMgmtAPI(ctx, metalClient, vmSet),
 		},
 		{
 			"TestServerPatch",
-			suite.TestServerPatch,
+			TestServerPatch(ctx, metalClient, options.InstallerImage, options.RegistryMirrors),
 		},
 		{
 			"TestServersReady",
-			suite.TestServersReady,
+			TestServersReady(ctx, metalClient),
 		},
 		{
 			"TestEnvironmentDefault",
-			suite.TestEnvironmentDefault,
+			TestEnvironmentDefault(ctx, metalClient, cluster, options.KernelURL, options.InitrdURL),
 		},
 		{
 			"TestServerClassDefault",
-			suite.TestServerClassDefault,
+			TestServerClassDefault(ctx, metalClient, vmSet),
 		},
 		{
 			"TestManagementCluster",
-			suite.TestManagementCluster,
+			TestManagementCluster(ctx, metalClient, cluster, vmSet, capiManager),
 		},
 	}, nil, nil).Run() == 0
 }

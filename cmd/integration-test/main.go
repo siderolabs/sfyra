@@ -13,21 +13,23 @@ import (
 
 	"github.com/talos-systems/talos/pkg/cli"
 
-	"github.com/talos-systems/sfyra/pkg/config"
-	"github.com/talos-systems/sfyra/pkg/setup"
+	"github.com/talos-systems/sfyra/pkg/bootstrap"
+	"github.com/talos-systems/sfyra/pkg/capi"
 	"github.com/talos-systems/sfyra/pkg/tests"
+	"github.com/talos-systems/sfyra/pkg/vm"
 )
 
 func main() {
-	options := config.DefaultOptions()
+	options := DefaultOptions()
 
 	flag.BoolVar(&options.SkipTeardown, "skip-teardown", options.SkipTeardown, "skip tearing down cluster")
 	flag.StringVar(&options.BootstrapClusterName, "bootstrap-cluster-name", options.BootstrapClusterName, "bootstrap cluster name")
 	flag.StringVar(&options.BootstrapTalosVmlinuz, "bootstrap-vmlinuz", options.BootstrapTalosVmlinuz, "Talos kernel image for bootstrap cluster")
 	flag.StringVar(&options.BootstrapTalosInitramfs, "bootstrap-initramfs", options.BootstrapTalosInitramfs, "Talos initramfs image for bootstrap cluster")
 	flag.StringVar(&options.BootstrapTalosInstaller, "bootstrap-installer", options.BootstrapTalosInstaller, "Talos install image for bootstrap cluster")
-	flag.StringVar(&options.CIDR, "cidr", options.CIDR, "network CIDR")
-	flag.IntVar(&options.Nodes, "nodes", options.Nodes, "number of PXE nodes to create")
+	flag.StringVar(&options.BootstrapCIDR, "bootstrap-cidr", options.BootstrapCIDR, "bootstrap cluster network CIDR")
+	flag.StringVar(&options.ManagementCIDR, "management-cidr", options.ManagementCIDR, "management cluster network CIDR")
+	flag.IntVar(&options.ManagementNodes, "management-nodes", options.ManagementNodes, "number of PXE nodes to create for the management rack")
 	flag.StringVar(&options.TalosctlPath, "talosctl-path", options.TalosctlPath, "path to the talosctl (for qemu provisioner)")
 	flag.Var(&options.RegistryMirrors, "registry-mirrors", "registry mirrors to use")
 	flag.StringVar(&options.TalosKernelURL, "talos-kernel-url", options.TalosKernelURL, "Talos kernel image URL for Cluster API Environment")
@@ -38,7 +40,22 @@ func main() {
 	flag.Parse()
 
 	err := cli.WithContext(context.Background(), func(ctx context.Context) error {
-		bootstrapCluster, err := setup.NewBootstrapCluster(ctx, &options)
+		bootstrapCluster, err := bootstrap.NewCluster(ctx, bootstrap.Options{
+			Name: options.BootstrapClusterName,
+			CIDR: options.BootstrapCIDR,
+
+			Vmlinuz:        options.BootstrapTalosVmlinuz,
+			Initramfs:      options.BootstrapTalosInitramfs,
+			InstallerImage: options.BootstrapTalosInstaller,
+
+			TalosctlPath: options.TalosctlPath,
+
+			RegistryMirrors: options.RegistryMirrors,
+
+			CPUs:   options.CPUs,
+			MemMB:  options.MemMB,
+			DiskGB: options.DiskGB,
+		})
 		if err != nil {
 			return err
 		}
@@ -51,7 +68,35 @@ func main() {
 			return err
 		}
 
-		clusterAPI, err := setup.NewClusterAPI(ctx, &options, bootstrapCluster)
+		managementSet, err := vm.NewSet(ctx, vm.Options{
+			Name:       options.BootstrapClusterName + "-management",
+			Nodes:      options.ManagementNodes,
+			BootSource: bootstrapCluster.SideroComponentsIP(),
+			CIDR:       options.ManagementCIDR,
+
+			TalosctlPath: options.TalosctlPath,
+
+			CPUs:   options.CPUs,
+			MemMB:  options.MemMB,
+			DiskGB: options.DiskGB,
+		})
+		if err != nil {
+			return err
+		}
+
+		if !options.SkipTeardown {
+			defer managementSet.TearDown(ctx) //nolint: errcheck
+		}
+
+		if err = managementSet.Setup(ctx); err != nil {
+			return err
+		}
+
+		clusterAPI, err := capi.NewManager(ctx, bootstrapCluster, capi.Options{
+			BootstrapProviders:      options.BootstrapProviders,
+			InfrastructureProviders: options.InfrastructureProviders,
+			ControlPlaneProviders:   options.ControlPlaneProviders,
+		})
 		if err != nil {
 			return err
 		}
@@ -60,7 +105,13 @@ func main() {
 			return err
 		}
 
-		if ok := tests.Run(ctx, &options, bootstrapCluster, clusterAPI); !ok {
+		if ok := tests.Run(ctx, bootstrapCluster, managementSet, clusterAPI, tests.Options{
+			KernelURL:      options.TalosKernelURL,
+			InitrdURL:      options.TalosInitrdURL,
+			InstallerImage: options.TalosInstaller,
+
+			RegistryMirrors: options.RegistryMirrors,
+		}); !ok {
 			return fmt.Errorf("test failure")
 		}
 
