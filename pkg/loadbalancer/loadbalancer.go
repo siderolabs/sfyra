@@ -19,9 +19,9 @@ import (
 
 	cacpt "github.com/talos-systems/cluster-api-control-plane-provider-talos/api/v1alpha3"
 	"github.com/talos-systems/go-loadbalancer/loadbalancer"
-	sidero "github.com/talos-systems/sidero/app/cluster-api-provider-sidero/api/v1alpha3"
-	metal "github.com/talos-systems/sidero/app/metal-controller-manager/api/v1alpha1"
-	"github.com/talos-systems/talos/pkg/provision"
+	sidero "github.com/talos-systems/sidero/app/caps-controller-manager/api/v1alpha3"
+	metal "github.com/talos-systems/sidero/app/sidero-controller-manager/api/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/cluster-api/api/v1alpha3"
@@ -30,30 +30,30 @@ import (
 
 // ControlPlane implements dynamic loadbalancer for the control plane.
 type ControlPlane struct {
-	client client.Client
-
-	endpoint string
-	lb       loadbalancer.TCP
-
-	prevUpstreams []string
-
-	clusterNamespace, clusterName string
-	nodes                         []provision.NodeInfo
-
+	client    client.Client
 	ctx       context.Context
 	ctxCancel context.CancelFunc
+
+	clusterNamespace, clusterName string
+	endpoint                      string
+	lb                            loadbalancer.TCP
+
+	prevUpstreams []string
 
 	wg sync.WaitGroup
 }
 
 // NewControlPlane initializes new control plane load balancer.
-func NewControlPlane(client client.Client, address net.IP, port int, clusterNamespace, clusterName string, nodes []provision.NodeInfo) (*ControlPlane, error) {
+func NewControlPlane(client client.Client, address net.IP, port int, clusterNamespace, clusterName string, verboseLog bool) (*ControlPlane, error) {
 	cp := ControlPlane{
 		client:           client,
 		clusterNamespace: clusterNamespace,
 		clusterName:      clusterName,
-		nodes:            nodes,
 	}
+
+	cp.lb.DialTimeout = 5 * time.Second
+	cp.lb.KeepAlivePeriod = time.Second
+	cp.lb.TCPUserTimeout = 5 * time.Second
 
 	cp.ctx, cp.ctxCancel = context.WithCancel(context.Background())
 
@@ -68,8 +68,10 @@ func NewControlPlane(client client.Client, address net.IP, port int, clusterName
 
 	cp.endpoint = net.JoinHostPort(address.String(), strconv.Itoa(port))
 
-	// send logs to /dev/null
-	cp.lb.Logger = log.New(ioutil.Discard, "", 0)
+	if !verboseLog {
+		// send logs to /dev/null
+		cp.lb.Logger = log.New(ioutil.Discard, "", 0)
+	}
 
 	// create route without any upstreams yet
 	if err := cp.lb.AddRoute(cp.endpoint, nil); err != nil {
@@ -151,7 +153,7 @@ func (cp *ControlPlane) reconcile() error {
 		var metalMachine sidero.MetalMachine
 
 		if err := cp.client.Get(cp.ctx, types.NamespacedName{Namespace: machine.Spec.InfrastructureRef.Namespace, Name: machine.Spec.InfrastructureRef.Name}, &metalMachine); err != nil {
-			return err
+			continue
 		}
 
 		var server metal.Server
@@ -164,11 +166,9 @@ func (cp *ControlPlane) reconcile() error {
 			return err
 		}
 
-		for _, node := range cp.nodes {
-			if node.UUID.String() == server.Name {
-				upstreams = append(upstreams, fmt.Sprintf("%s:6443", node.PrivateIP.String()))
-
-				break
+		for _, address := range server.Status.Addresses {
+			if address.Type == corev1.NodeInternalIP {
+				upstreams = append(upstreams, fmt.Sprintf("%s:6443", address.Address))
 			}
 		}
 	}

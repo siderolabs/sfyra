@@ -12,6 +12,7 @@ import (
 
 	talosnet "github.com/talos-systems/net"
 	clientconfig "github.com/talos-systems/talos/pkg/machinery/client/config"
+	"github.com/talos-systems/talos/pkg/machinery/config/types/v1alpha1/machine"
 	"github.com/talos-systems/talos/pkg/provision"
 	"github.com/talos-systems/talos/pkg/provision/providers/qemu"
 
@@ -22,23 +23,28 @@ import (
 type Set struct {
 	provisioner provision.Provisioner
 	cluster     provision.Cluster
-	options     Options
-	stateDir    string
 	bridgeIP    net.IP
+	stateDir    string
+	cniDir      string
+	options     Options
 }
 
 // Options configure new VM set.
 type Options struct {
-	Name       string
-	Nodes      int
-	BootSource net.IP
-	CIDR       string
+	Name string
+	CIDR string
 
-	TalosctlPath string
+	TalosctlPath     string
+	CNIBundleURL     string
+	DefaultBootOrder string
+
+	BootSource net.IP
 
 	MemMB  int64
 	CPUs   int64
 	DiskGB int64
+
+	Nodes int
 }
 
 // NewSet creates new VM set.
@@ -67,6 +73,7 @@ func (set *Set) Setup(ctx context.Context) error {
 	}
 
 	set.stateDir = filepath.Join(defaultStateDir, "clusters")
+	set.cniDir = filepath.Join(defaultStateDir, "cni")
 
 	fmt.Printf("VM set state directory: %s, name: %s\n", set.stateDir, set.options.Name)
 
@@ -124,15 +131,17 @@ func (set *Set) create(ctx context.Context) error {
 		Name: set.options.Name,
 
 		Network: provision.NetworkRequest{
-			Name:        set.options.Name,
-			CIDR:        *cidr,
-			GatewayAddr: set.bridgeIP,
-			MTU:         constants.MTU,
-			Nameservers: constants.Nameservers,
+			Name:         set.options.Name,
+			CIDRs:        []net.IPNet{*cidr},
+			GatewayAddrs: []net.IP{set.bridgeIP},
+			MTU:          constants.MTU,
+			Nameservers:  constants.Nameservers,
 			CNI: provision.CNIConfig{
-				BinPath:  constants.CNIBinPath,
-				ConfDir:  constants.CNIConfDir,
-				CacheDir: constants.CNICacheDir,
+				BinPath:  []string{filepath.Join(set.cniDir, "bin")},
+				ConfDir:  filepath.Join(set.cniDir, "conf.d"),
+				CacheDir: filepath.Join(set.cniDir, "cache"),
+
+				BundleURL: set.options.CNIBundleURL,
 			},
 		},
 
@@ -143,14 +152,21 @@ func (set *Set) create(ctx context.Context) error {
 	for i := 0; i < set.options.Nodes; i++ {
 		request.Nodes = append(request.Nodes,
 			provision.NodeRequest{
-				Name:             fmt.Sprintf("pxe-%d", i),
-				IP:               ips[i+1],
-				Memory:           set.options.MemMB * 1024 * 1024,
-				NanoCPUs:         set.options.CPUs * 1000 * 1000 * 1000,
-				DiskSize:         set.options.DiskGB * 1024 * 1024 * 1024,
-				PXEBooted:        true,
-				TFTPServer:       set.options.BootSource.String(),
-				IPXEBootFilename: fmt.Sprintf("http://%s:8081/boot.ipxe", set.options.BootSource),
+				Name:     fmt.Sprintf("pxe-%d", i),
+				Type:     machine.TypeUnknown,
+				IPs:      []net.IP{ips[i+1]},
+				Memory:   set.options.MemMB * 1024 * 1024,
+				NanoCPUs: set.options.CPUs * 1000 * 1000 * 1000,
+				Disks: []*provision.Disk{
+					{
+						Size: uint64(set.options.DiskGB) * 1024 * 1024 * 1024,
+					},
+				},
+				PXEBooted:           true,
+				TFTPServer:          set.options.BootSource.String(),
+				IPXEBootFilename:    "undionly.kpxe",
+				SkipInjectingConfig: true,
+				DefaultBootOrder:    set.options.DefaultBootOrder,
 			})
 	}
 

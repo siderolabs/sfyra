@@ -8,7 +8,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net"
 	"os"
 	"path/filepath"
@@ -21,6 +20,7 @@ import (
 	clientconfig "github.com/talos-systems/talos/pkg/machinery/client/config"
 	"github.com/talos-systems/talos/pkg/machinery/config/types/v1alpha1/bundle"
 	"github.com/talos-systems/talos/pkg/machinery/config/types/v1alpha1/generate"
+	"github.com/talos-systems/talos/pkg/machinery/config/types/v1alpha1/machine"
 	"github.com/talos-systems/talos/pkg/provision"
 	"github.com/talos-systems/talos/pkg/provision/access"
 	"github.com/talos-systems/talos/pkg/provision/providers/qemu"
@@ -34,17 +34,18 @@ import (
 
 // Cluster sets up initial Talos cluster.
 type Cluster struct {
-	options Options
-
+	access      *access.Adapter
 	provisioner provision.Provisioner
 	cluster     provision.Cluster
-	access      *access.Adapter
+
+	stateDir   string
+	cniDir     string
+	configPath string
 
 	bridgeIP net.IP
 	masterIP net.IP
 
-	stateDir   string
-	configPath string
+	options Options
 }
 
 // Options for the bootstrap cluster.
@@ -54,6 +55,7 @@ type Options struct {
 
 	Vmlinuz, Initramfs string
 	InstallerImage     string
+	CNIBundleURL       string
 
 	TalosctlPath string
 
@@ -94,9 +96,8 @@ func (cluster *Cluster) Setup(ctx context.Context) error {
 		return err
 	}
 
-	log.Printf("cluster.options = %v", cluster.options)
-
 	cluster.stateDir = filepath.Join(defaultStateDir, "clusters")
+	cluster.cniDir = filepath.Join(defaultStateDir, "cni")
 
 	fmt.Printf("bootstrap cluster state directory: %s, name: %s\n", cluster.stateDir, cluster.options.Name)
 
@@ -132,8 +133,6 @@ func (cluster *Cluster) findExisting(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-
-	config.Context = cluster.options.Name
 
 	_, cidr, err := net.ParseCIDR(cluster.options.CIDR)
 	if err != nil {
@@ -175,15 +174,17 @@ func (cluster *Cluster) create(ctx context.Context) error {
 		Name: cluster.options.Name,
 
 		Network: provision.NetworkRequest{
-			Name:        cluster.options.Name,
-			CIDR:        *cidr,
-			GatewayAddr: cluster.bridgeIP,
-			MTU:         constants.MTU,
-			Nameservers: constants.Nameservers,
+			Name:         cluster.options.Name,
+			CIDRs:        []net.IPNet{*cidr},
+			GatewayAddrs: []net.IP{cluster.bridgeIP},
+			MTU:          constants.MTU,
+			Nameservers:  constants.Nameservers,
 			CNI: provision.CNIConfig{
-				BinPath:  constants.CNIBinPath,
-				ConfDir:  constants.CNIConfDir,
-				CacheDir: constants.CNICacheDir,
+				BinPath:  []string{filepath.Join(cluster.cniDir, "bin")},
+				ConfDir:  filepath.Join(cluster.cniDir, "conf.d"),
+				CacheDir: filepath.Join(cluster.cniDir, "cache"),
+
+				BundleURL: cluster.options.CNIBundleURL,
 			},
 		},
 
@@ -217,6 +218,7 @@ func (cluster *Cluster) create(ctx context.Context) error {
 				genOptions,
 				generate.WithEndpointList([]string{masterEndpoint}),
 				generate.WithInstallImage(cluster.options.InstallerImage),
+				generate.WithDNSDomain("cluster.local"),
 			),
 		}))
 	if err != nil {
@@ -226,11 +228,16 @@ func (cluster *Cluster) create(ctx context.Context) error {
 	request.Nodes = append(request.Nodes,
 		provision.NodeRequest{
 			Name:     constants.BootstrapMaster,
-			IP:       cluster.masterIP,
+			Type:     machine.TypeControlPlane,
+			IPs:      []net.IP{cluster.masterIP},
 			Memory:   cluster.options.MemMB * 1024 * 1024,
 			NanoCPUs: cluster.options.CPUs * 1000 * 1000 * 1000,
-			DiskSize: cluster.options.DiskGB * 1024 * 1024 * 1024,
-			Config:   configBundle.ControlPlane(),
+			Disks: []*provision.Disk{
+				{
+					Size: uint64(cluster.options.DiskGB) * 1024 * 1024 * 1024,
+				},
+			},
+			Config: configBundle.ControlPlane(),
 		})
 
 	cluster.cluster, err = cluster.provisioner.Create(ctx, request,
@@ -256,15 +263,11 @@ func (cluster *Cluster) create(ctx context.Context) error {
 		return err
 	}
 
-	if err = cluster.access.Bootstrap(ctx, os.Stderr); err != nil {
-		return err
-	}
-
-	return nil
+	return cluster.access.Bootstrap(ctx, os.Stderr)
 }
 
 func (cluster *Cluster) untaint(ctx context.Context) error {
-	clientset, err := cluster.access.K8sClient(ctx)
+	clientset, err := cluster.KubernetesClient().K8sClient(ctx)
 	if err != nil {
 		return err
 	}

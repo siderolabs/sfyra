@@ -1,7 +1,7 @@
 ---
 # THIS FILE WAS AUTOMATICALLY GENERATED, PLEASE DO NOT EDIT.
 #
-# Generated on 2020-09-03T20:15:36Z by kres e87a7d8-dirty.
+# Generated on 2021-08-24T17:22:23Z by kres e5f1e7e-dirty.
 
 kind: pipeline
 type: kubernetes
@@ -105,11 +105,11 @@ steps:
   depends_on:
   - unit-tests
 
-- name: integration-test
+- name: sfyra
   pull: always
   image: autonomy/build-container:latest
   commands:
-  - make integration-test
+  - make sfyra
   volumes:
   - name: outer-docker-socket
     path: /var/outer-run
@@ -121,24 +121,6 @@ steps:
     path: /root/.ssh
   depends_on:
   - base
-
-- name: run-integration-test
-  pull: always
-  image: autonomy/build-container:latest
-  commands:
-  - make run-integration-test
-  privileged: true
-  volumes:
-  - name: outer-docker-socket
-    path: /var/outer-run
-  - name: docker-socket
-    path: /var/run
-  - name: buildx
-    path: /root/.docker/buildx
-  - name: ssh
-    path: /root/.ssh
-  depends_on:
-  - integration-test
 
 - name: lint
   pull: always
@@ -157,9 +139,138 @@ steps:
   depends_on:
   - base
 
+- name: image-sfyra
+  pull: always
+  image: autonomy/build-container:latest
+  commands:
+  - make image-sfyra
+  volumes:
+  - name: outer-docker-socket
+    path: /var/outer-run
+  - name: docker-socket
+    path: /var/run
+  - name: buildx
+    path: /root/.docker/buildx
+  - name: ssh
+    path: /root/.ssh
+  depends_on:
+  - sfyra
+  - lint
+  - unit-tests
+
+- name: push-sfyra
+  pull: always
+  image: autonomy/build-container:latest
+  commands:
+  - docker login ghcr.io --username "$${GHCR_USERNAME}" --password "$${GHCR_PASSWORD}"
+  - make image-sfyra
+  environment:
+    GHCR_PASSWORD:
+      from_secret: ghcr_token
+    GHCR_USERNAME:
+      from_secret: ghcr_username
+    PUSH: true
+  volumes:
+  - name: outer-docker-socket
+    path: /var/outer-run
+  - name: docker-socket
+    path: /var/run
+  - name: buildx
+    path: /root/.docker/buildx
+  - name: ssh
+    path: /root/.ssh
+  when:
+    event:
+      exclude:
+      - pull_request
+  depends_on:
+  - image-sfyra
+
+- name: push-sfyra-latest
+  pull: always
+  image: autonomy/build-container:latest
+  commands:
+  - docker login ghcr.io --username "$${GHCR_USERNAME}" --password "$${GHCR_PASSWORD}"
+  - make image-sfyra TAG=latest
+  environment:
+    GHCR_PASSWORD:
+      from_secret: ghcr_token
+    GHCR_USERNAME:
+      from_secret: ghcr_username
+    PUSH: true
+  volumes:
+  - name: outer-docker-socket
+    path: /var/outer-run
+  - name: docker-socket
+    path: /var/run
+  - name: buildx
+    path: /root/.docker/buildx
+  - name: ssh
+    path: /root/.ssh
+  when:
+    branch:
+    - master
+    event:
+      exclude:
+      - pull_request
+  depends_on:
+  - push-sfyra
+
+- name: release-notes
+  pull: always
+  image: autonomy/build-container:latest
+  commands:
+  - make release-notes
+  volumes:
+  - name: outer-docker-socket
+    path: /var/outer-run
+  - name: docker-socket
+    path: /var/run
+  - name: buildx
+    path: /root/.docker/buildx
+  - name: ssh
+    path: /root/.ssh
+  when:
+    event:
+    - tag
+  depends_on:
+  - unit-tests
+  - coverage
+  - sfyra
+  - image-sfyra
+  - lint
+
+- name: release
+  pull: always
+  image: plugins/github-release
+  settings:
+    api_key:
+      from_secret: github_token
+    checksum:
+    - sha256
+    - sha512
+    draft: true
+    files:
+    - _out/*
+    note: _out/RELEASE_NOTES.md
+  volumes:
+  - name: outer-docker-socket
+    path: /var/outer-run
+  - name: docker-socket
+    path: /var/run
+  - name: buildx
+    path: /root/.docker/buildx
+  - name: ssh
+    path: /root/.ssh
+  when:
+    event:
+    - tag
+  depends_on:
+  - release-notes
+
 services:
 - name: docker
-  image: docker:19.03-dind
+  image: docker:20.10-dind
   entrypoint:
   - dockerd
   commands:
@@ -167,12 +278,7 @@ services:
   - --dns=8.8.4.4
   - --mtu=1500
   - --log-level=error
-  - --insecure-registry=http://registry.ci.svc:5000
   privileged: true
-  resources:
-    requests:
-      cpu: 24000
-      memory: 48GiB
   volumes:
   - name: outer-docker-socket
     path: /var/outer-run

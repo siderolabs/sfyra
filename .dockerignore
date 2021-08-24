@@ -1,10 +1,10 @@
 # THIS FILE WAS AUTOMATICALLY GENERATED, PLEASE DO NOT EDIT.
 #
-# Generated on 2020-08-20T21:21:53Z by kres 197b72f-dirty.
+# Generated on 2021-08-24T17:10:56Z by kres 261d3fa-dirty.
 
 **
-!pkg
 !cmd
+!pkg
 !go.mod
 !go.sum
 !.golangci.yml

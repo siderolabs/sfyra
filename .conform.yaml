@@ -1,12 +1,13 @@
 # THIS FILE WAS AUTOMATICALLY GENERATED, PLEASE DO NOT EDIT.
 #
-# Generated on 2020-09-03T19:14:32Z by kres acd259e-dirty.
+# Generated on 2021-08-24T17:10:56Z by kres 261d3fa-dirty.
 
+---
 policies:
 - type: commit
   spec:
     dco: true
-    gpg: false
+    gpg: true
     spellcheck:
       locale: US
     maximumOfOneCommit: true
@@ -19,7 +20,7 @@ policies:
       required: true
     conventional:
       types: ["chore","docs","perf","refactor","style","test","release"]
-      scopes: ["*"]
+      scopes: [".*"]
 - type: license
   spec:
     skipPaths:
@@ -28,6 +29,7 @@ policies:
       - .go
     excludeSuffixes:
       - .pb.go
+      - .pb.gw.go
     header: |
       // This Source Code Form is subject to the terms of the Mozilla Public
       // License, v. 2.0. If a copy of the MPL was not distributed with this

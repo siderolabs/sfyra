@@ -8,6 +8,7 @@ package tests
 import (
 	"context"
 	"log"
+	"regexp"
 	"testing"
 
 	"github.com/talos-systems/sfyra/pkg/capi"
@@ -21,21 +22,25 @@ type TestFunc func(t *testing.T)
 // Options for the test.
 type Options struct {
 	KernelURL, InitrdURL string
-	InstallerImage       string
+
+	RunTestPattern string
+
+	TalosRelease      string
+	KubernetesVersion string
 
 	RegistryMirrors []string
 }
 
 // Run all the tests.
 func Run(ctx context.Context, cluster talos.Cluster, vmSet *vm.Set, capiManager *capi.Manager, options Options) (ok bool) {
-	metalClient, err := capiManager.GetMetalClient(ctx)
+	metalClient, err := capiManager.GetClient(ctx)
 	if err != nil {
 		log.Printf("error creating metalClient: %s", err)
 
 		return false
 	}
 
-	return testing.MainStart(matchStringOnly(func(pat, str string) (bool, error) { return true, nil }), []testing.InternalTest{
+	testList := []testing.InternalTest{
 		{
 			"TestServerRegistration",
 			TestServerRegistration(ctx, metalClient, vmSet),
@@ -46,23 +51,107 @@ func Run(ctx context.Context, cluster talos.Cluster, vmSet *vm.Set, capiManager 
 		},
 		{
 			"TestServerPatch",
-			TestServerPatch(ctx, metalClient, options.InstallerImage, options.RegistryMirrors),
+			TestServerPatch(ctx, metalClient, options.RegistryMirrors),
+		},
+		{
+			"TestServerAcceptance",
+			TestServerAcceptance(ctx, metalClient, vmSet),
+		},
+		{
+			"TestServerResetOnAcceptance",
+			TestServerResetOnAcceptance(ctx, metalClient),
 		},
 		{
 			"TestServersReady",
 			TestServersReady(ctx, metalClient),
 		},
 		{
+			"TestServersDiscoveredIPs",
+			TestServersDiscoveredIPs(ctx, metalClient),
+		},
+		{
 			"TestEnvironmentDefault",
 			TestEnvironmentDefault(ctx, metalClient, cluster, options.KernelURL, options.InitrdURL),
 		},
 		{
-			"TestServerClassDefault",
-			TestServerClassDefault(ctx, metalClient, vmSet),
+			"TestEnvironmentCreate",
+			TestEnvironmentCreate(ctx, metalClient, cluster, options.KernelURL, options.InitrdURL),
+		},
+		{
+			"TestServerClassAny",
+			TestServerClassAny(ctx, metalClient, vmSet),
+		},
+		{
+			"TestServerClassCreate",
+			TestServerClassCreate(ctx, metalClient, vmSet),
+		},
+		{
+			"TestServerClassPatch",
+			TestServerClassPatch(ctx, metalClient, cluster, capiManager),
 		},
 		{
 			"TestManagementCluster",
-			TestManagementCluster(ctx, metalClient, cluster, vmSet, capiManager),
+			TestManagementCluster(ctx, metalClient, cluster, vmSet, capiManager, options.TalosRelease, options.KubernetesVersion),
 		},
-	}, nil, nil).Run() == 0
+		{
+			"TestMatchServersMetalMachines",
+			TestMatchServersMetalMachines(ctx, metalClient),
+		},
+		{
+			"TestScaleWorkersUp",
+			TestScaleWorkersUp(ctx, metalClient, vmSet),
+		},
+		{
+			"TestScaleWorkersDown",
+			TestScaleWorkersDown(ctx, metalClient, vmSet),
+		},
+		{
+			"TestScaleControlPlaneUp",
+			TestScaleControlPlaneUp(ctx, metalClient, vmSet),
+		},
+		{
+			"TestScaleControlPlaneDown",
+			TestScaleControlPlaneDown(ctx, metalClient, vmSet),
+		},
+		{
+			"TestMachineDeploymentReconcile",
+			TestMachineDeploymentReconcile(ctx, metalClient),
+		},
+		{
+			"TestServerBindingReconcile",
+			TestServerBindingReconcile(ctx, metalClient),
+		},
+		{
+			"TestMetalMachineServerRefReconcile",
+			TestMetalMachineServerRefReconcile(ctx, metalClient),
+		},
+		{
+			"TestServerReset",
+			TestServerReset(ctx, metalClient),
+		},
+		{
+			"TestWorkloadCluster",
+			TestWorkloadCluster(ctx, metalClient, cluster, vmSet, capiManager, options.TalosRelease, options.KubernetesVersion),
+		},
+	}
+
+	testsToRun := []testing.InternalTest{}
+
+	var re *regexp.Regexp
+
+	if options.RunTestPattern != "" {
+		if re, err = regexp.Compile(options.RunTestPattern); err != nil {
+			log.Printf("run test pattern parse error: %s", err)
+
+			return false
+		}
+	}
+
+	for _, test := range testList {
+		if re == nil || re.MatchString(test.Name) {
+			testsToRun = append(testsToRun, test)
+		}
+	}
+
+	return testing.MainStart(matchStringOnly(func(pat, str string) (bool, error) { return true, nil }), testsToRun, nil, nil).Run() == 0
 }

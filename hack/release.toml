@@ -1,0 +1,16 @@
+# THIS FILE WAS AUTOMATICALLY GENERATED, PLEASE DO NOT EDIT.
+#
+# Generated on 2021-08-23T15:19:58Z by kres 907039b.
+
+
+# commit to be tagged for the new release
+commit = "HEAD"
+
+project_name = "sfyra"
+github_repo = "talos-systems/sfyra"
+match_deps = "^github.com/(talos-systems/[a-zA-Z0-9-]+)$"
+
+# previous = -
+# pre_release = true
+
+# [notes]

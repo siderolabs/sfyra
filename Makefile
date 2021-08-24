@@ -1,6 +1,6 @@
 # THIS FILE WAS AUTOMATICALLY GENERATED, PLEASE DO NOT EDIT.
 #
-# Generated on 2020-09-18T18:19:14Z by kres 7e146df-dirty.
+# Generated on 2021-08-24T17:10:56Z by kres 261d3fa-dirty.
 
 # common variables
 
@@ -8,13 +8,16 @@ SHA := $(shell git describe --match=none --always --abbrev=8 --dirty)
 TAG := $(shell git describe --tag --always --dirty)
 BRANCH := $(shell git rev-parse --abbrev-ref HEAD)
 ARTIFACTS := _out
-REGISTRY ?= docker.io
-USERNAME ?= autonomy
+REGISTRY ?= ghcr.io
+USERNAME ?= talos-systems
 REGISTRY_AND_USERNAME ?= $(REGISTRY)/$(USERNAME)
 GOFUMPT_VERSION ?= abc0db2c416aca0f60ea33c23c76665f6e7ba0b6
-GO_VERSION ?= 1.14
+GO_VERSION ?= 1.16
+PROTOBUF_GO_VERSION ?= 1.25.0
+GRPC_GO_VERSION ?= 1.1.0
+GRPC_GATEWAY_VERSION ?= 2.4.0
 TESTPKGS ?= ./...
-KRES_IMAGE ?= autonomy/kres:latest
+KRES_IMAGE ?= ghcr.io/talos-systems/kres:latest
 
 # docker build settings
 
@@ -33,12 +36,11 @@ COMMON_ARGS += --build-arg=TAG=$(TAG)
 COMMON_ARGS += --build-arg=USERNAME=$(USERNAME)
 COMMON_ARGS += --build-arg=TOOLCHAIN=$(TOOLCHAIN)
 COMMON_ARGS += --build-arg=GOFUMPT_VERSION=$(GOFUMPT_VERSION)
+COMMON_ARGS += --build-arg=PROTOBUF_GO_VERSION=$(PROTOBUF_GO_VERSION)
+COMMON_ARGS += --build-arg=GRPC_GO_VERSION=$(GRPC_GO_VERSION)
+COMMON_ARGS += --build-arg=GRPC_GATEWAY_VERSION=$(GRPC_GATEWAY_VERSION)
 COMMON_ARGS += --build-arg=TESTPKGS=$(TESTPKGS)
-TOOLCHAIN ?= docker.io/golang:1.15-alpine
-
-# extra variables
-
-TALOS_RELEASE ?= v0.7.0-alpha.2
+TOOLCHAIN ?= docker.io/golang:1.16-alpine
 
 # help menu
 
@@ -73,7 +75,7 @@ respectively.
 
 endef
 
-all: unit-tests integration-test run-integration-test lint
+all: unit-tests sfyra image-sfyra lint
 
 .PHONY: clean
 clean:  ## Cleans up all artifacts.
@@ -95,8 +97,8 @@ lint-gofumpt:  ## Runs gofumpt linter.
 fmt:  ## Formats the source code
 	@docker run --rm -it -v $(PWD):/src -w /src golang:$(GO_VERSION) \
 		bash -c "export GO111MODULE=on; export GOPROXY=https://proxy.golang.org; \
-		cd /tmp && go mod init tmp && go get mvdan.cc/gofumpt/gofumports@$(GOFUMPT_VERSION) && \
-		cd - && gofumports -w -local github.com/talos-systems/sfyra ."
+		go install mvdan.cc/gofumpt/gofumports@$(GOFUMPT_VERSION) && \
+		gofumports -w -local github.com/talos-systems/sfyra ."
 
 .PHONY: base
 base:  ## Prepare base toolchain
@@ -114,26 +116,15 @@ unit-tests-race:  ## Performs unit tests with race detection enabled.
 coverage:  ## Upload coverage data to codecov.io.
 	bash -c "bash <(curl -s https://codecov.io/bash) -f $(ARTIFACTS)/coverage.txt -X fix"
 
-.PHONY: $(ARTIFACTS)/integration-test
-$(ARTIFACTS)/integration-test:
-	@$(MAKE) local-integration-test DEST=$(ARTIFACTS)
+.PHONY: $(ARTIFACTS)/sfyra-linux-amd64
+$(ARTIFACTS)/sfyra-linux-amd64:
+	@$(MAKE) local-sfyra-linux-amd64 DEST=$(ARTIFACTS)
 
-.PHONY: integration-test
-integration-test: $(ARTIFACTS)/integration-test  ## Builds executable for integration-test.
+.PHONY: sfyra-linux-amd64
+sfyra-linux-amd64: $(ARTIFACTS)/sfyra-linux-amd64  ## Builds executable for sfyra-linux-amd64.
 
-$(ARTIFACTS)/$(TALOS_RELEASE)/%:
-	@mkdir -p $(ARTIFACTS)/$(TALOS_RELEASE)/
-	@curl -L -o "$(ARTIFACTS)/$(TALOS_RELEASE)/$*" "https://github.com/talos-systems/talos/releases/download/$(TALOS_RELEASE)/$*"
-
-.PHONY: $(ARTIFACTS)/$(TALOS_RELEASE)
-$(ARTIFACTS)/$(TALOS_RELEASE): $(ARTIFACTS)/$(TALOS_RELEASE)/vmlinuz $(ARTIFACTS)/$(TALOS_RELEASE)/initramfs.xz $(ARTIFACTS)/$(TALOS_RELEASE)/talosctl-linux-amd64
-
-.PHONY: talos-artifacts
-talos-artifacts: $(ARTIFACTS)/$(TALOS_RELEASE)
-
-.PHONY: run-integration-test
-run-integration-test: talos-artifacts
-	@ARTIFACTS=$(ARTIFACTS) TALOS_RELEASE=$(TALOS_RELEASE) ./hack/test/integration-test.sh
+.PHONY: sfyra
+sfyra: sfyra-linux-amd64
 
 .PHONY: lint-markdown
 lint-markdown:  ## Runs markdownlint.
@@ -141,6 +132,10 @@ lint-markdown:  ## Runs markdownlint.
 
 .PHONY: lint
 lint: lint-golangci-lint lint-gofumpt lint-markdown  ## Run all linters for the project.
+
+.PHONY: image-sfyra
+image-sfyra:  ## Builds image for sfyra.
+	@$(MAKE) target-$@ TARGET_ARGS="--tag=$(REGISTRY)/$(USERNAME)/sfyra:$(TAG)"
 
 .PHONY: rekres
 rekres:
@@ -151,4 +146,9 @@ rekres:
 help:  ## This help menu.
 	@echo "$$HELP_MENU_HEADER"
 	@grep -E '^[a-zA-Z%_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
+
+.PHONY: release-notes
+release-notes:
+	mkdir -p $(ARTIFACTS)
+	@ARTIFACTS=$(ARTIFACTS) ./hack/release.sh $@ $(ARTIFACTS)/RELEASE_NOTES.md $(TAG)
 

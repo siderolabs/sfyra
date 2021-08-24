@@ -7,45 +7,39 @@ package capi
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"io/ioutil"
+	"time"
 
-	cabpt "github.com/talos-systems/cluster-api-bootstrap-provider-talos/api/v1alpha3"
-	cacpt "github.com/talos-systems/cluster-api-control-plane-provider-talos/api/v1alpha3"
-	sidero "github.com/talos-systems/sidero/app/cluster-api-provider-sidero/api/v1alpha3"
-	metal "github.com/talos-systems/sidero/app/metal-controller-manager/api/v1alpha1"
-	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/strategicpatch"
 	"k8s.io/client-go/kubernetes"
-	"sigs.k8s.io/cluster-api/api/v1alpha3"
 	"sigs.k8s.io/cluster-api/cmd/clusterctl/client"
 	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/talos-systems/sfyra/pkg/capi/infrastructure"
 	"github.com/talos-systems/sfyra/pkg/talos"
 )
 
 // Manager installs and controls cluster API installation.
 type Manager struct {
-	options Options
-
 	cluster talos.Cluster
 
 	kubeconfig    client.Kubeconfig
 	client        client.Client
 	clientset     *kubernetes.Clientset
 	runtimeClient runtimeclient.Client
+
+	options Options
 }
 
 // Options for the CAPI installer.
 type Options struct {
+	ClusterctlConfigPath    string
+	CoreProvider            string
 	BootstrapProviders      []string
 	InfrastructureProviders []string
 	ControlPlaneProviders   []string
+
+	PowerSimulatedExplicitFailureProb float64
+	PowerSimulatedSilentFailureProb   float64
 }
 
 // NewManager creates new Manager object.
@@ -57,7 +51,7 @@ func NewManager(ctx context.Context, cluster talos.Cluster, options Options) (*M
 
 	var err error
 
-	clusterAPI.client, err = client.New("")
+	clusterAPI.client, err = client.New(options.ClusterctlConfigPath)
 	if err != nil {
 		return nil, err
 	}
@@ -102,8 +96,8 @@ func (clusterAPI *Manager) GetManagerClient() client.Client {
 	return clusterAPI.client
 }
 
-// GetMetalClient returns k8s client stuffed with CAPI CRDs.
-func (clusterAPI *Manager) GetMetalClient(ctx context.Context) (runtimeclient.Client, error) {
+// GetClient returns k8s client stuffed with CAPI CRDs.
+func (clusterAPI *Manager) GetClient(ctx context.Context) (runtimeclient.Client, error) {
 	if clusterAPI.runtimeClient != nil {
 		return clusterAPI.runtimeClient, nil
 	}
@@ -113,29 +107,7 @@ func (clusterAPI *Manager) GetMetalClient(ctx context.Context) (runtimeclient.Cl
 		return nil, err
 	}
 
-	scheme := runtime.NewScheme()
-
-	if err = v1alpha3.AddToScheme(scheme); err != nil {
-		return nil, err
-	}
-
-	if err = cacpt.AddToScheme(scheme); err != nil {
-		return nil, err
-	}
-
-	if err = cabpt.AddToScheme(scheme); err != nil {
-		return nil, err
-	}
-
-	if err = sidero.AddToScheme(scheme); err != nil {
-		return nil, err
-	}
-
-	if err = metal.AddToScheme(scheme); err != nil {
-		return nil, err
-	}
-
-	clusterAPI.runtimeClient, err = runtimeclient.New(config, runtimeclient.Options{Scheme: scheme})
+	clusterAPI.runtimeClient, err = GetMetalClient(config)
 
 	return clusterAPI.runtimeClient, err
 }
@@ -147,130 +119,35 @@ func (clusterAPI *Manager) Install(ctx context.Context) error {
 		return err
 	}
 
-	options := client.InitOptions{
-		Kubeconfig:              kubeconfig,
-		CoreProvider:            "",
-		BootstrapProviders:      clusterAPI.options.BootstrapProviders,
-		ControlPlaneProviders:   clusterAPI.options.ControlPlaneProviders,
-		InfrastructureProviders: clusterAPI.options.InfrastructureProviders,
-		TargetNamespace:         "",
-		WatchingNamespace:       "",
-		LogUsageInstructions:    false,
+	opts := infrastructure.Options{
+		SideroOptions: infrastructure.SideroOptions{
+			ManagerHostNetwork:       true,
+			ManagerAPIEndpoint:       clusterAPI.cluster.SideroComponentsIP(),
+			ServerRebootTimeout:      time.Second * 30,
+			TestPowerExplicitFailure: clusterAPI.options.PowerSimulatedExplicitFailureProb,
+			TestPowerSilentFailure:   clusterAPI.options.PowerSimulatedSilentFailureProb,
+		},
+		InitOptions: client.InitOptions{
+			Kubeconfig:              kubeconfig,
+			CoreProvider:            clusterAPI.options.CoreProvider,
+			BootstrapProviders:      clusterAPI.options.BootstrapProviders,
+			ControlPlaneProviders:   clusterAPI.options.ControlPlaneProviders,
+			InfrastructureProviders: clusterAPI.options.InfrastructureProviders,
+			TargetNamespace:         "",
+			WatchingNamespace:       "",
+			LogUsageInstructions:    false,
+		},
 	}
 
-	_, err = clusterAPI.clientset.CoreV1().Namespaces().Get(ctx, "sidero-system", metav1.GetOptions{})
-	if err != nil {
-		_, err = clusterAPI.client.Init(options)
+	for _, kind := range clusterAPI.options.InfrastructureProviders {
+		provider, err := infrastructure.NewProvider(kind)
 		if err != nil {
 			return err
 		}
-	}
 
-	return clusterAPI.patch(ctx)
-}
-
-func (clusterAPI *Manager) patch(ctx context.Context) error {
-	const (
-		sideroNamespace         = "sidero-system"
-		sideroMetadataServer    = "sidero-metadata-server"
-		sideroControllerManager = "sidero-controller-manager"
-	)
-
-	// sidero-metadata-server
-	deployment, err := clusterAPI.clientset.AppsV1().Deployments(sideroNamespace).Get(ctx, sideroMetadataServer, metav1.GetOptions{})
-	if err != nil {
-		return err
-	}
-
-	oldDeployment, err := json.Marshal(deployment)
-	if err != nil {
-		return err
-	}
-
-	argsPatched := false
-
-	for _, arg := range deployment.Spec.Template.Spec.Containers[0].Args {
-		if arg == "--port=9091" {
-			argsPatched = true
+		if err = provider.Init(ctx, clusterAPI.client, clusterAPI.clientset, &opts); err != nil {
+			return err
 		}
-	}
-
-	if !argsPatched {
-		deployment.Spec.Template.Spec.Containers[0].Args = append(deployment.Spec.Template.Spec.Containers[0].Args, "--port=9091")
-	}
-
-	deployment.Spec.Template.Spec.Containers[0].Ports = []corev1.ContainerPort{
-		{
-			ContainerPort: 9091,
-			HostPort:      9091,
-			Name:          "http",
-			Protocol:      corev1.ProtocolTCP,
-		},
-	}
-	deployment.Spec.Template.Spec.HostNetwork = true
-	deployment.Spec.Strategy.RollingUpdate = nil
-	deployment.Spec.Strategy.Type = appsv1.RecreateDeploymentStrategyType
-
-	newDeployment, err := json.Marshal(deployment)
-	if err != nil {
-		return err
-	}
-
-	patchBytes, err := strategicpatch.CreateTwoWayMergePatch(oldDeployment, newDeployment, appsv1.Deployment{})
-	if err != nil {
-		return fmt.Errorf("failed to create two way merge patch: %w", err)
-	}
-
-	_, err = clusterAPI.clientset.AppsV1().Deployments(sideroNamespace).Patch(ctx, deployment.Name, types.StrategicMergePatchType, patchBytes, metav1.PatchOptions{
-		FieldManager: "sfyra",
-	})
-	if err != nil {
-		return err
-	}
-
-	// sidero-controller-manager
-	deployment, err = clusterAPI.clientset.AppsV1().Deployments(sideroNamespace).Get(ctx, sideroControllerManager, metav1.GetOptions{})
-	if err != nil {
-		return err
-	}
-
-	oldDeployment, err = json.Marshal(deployment)
-	if err != nil {
-		return err
-	}
-
-	argsPatched = false
-
-	for _, arg := range deployment.Spec.Template.Spec.Containers[1].Args {
-		if arg == "--metrics-addr=127.0.0.1:8080" {
-			argsPatched = true
-		}
-	}
-
-	if !argsPatched {
-		deployment.Spec.Template.Spec.Containers[1].Args = append(deployment.Spec.Template.Spec.Containers[1].Args,
-			fmt.Sprintf("--api-endpoint=%s", clusterAPI.cluster.SideroComponentsIP()), "--metrics-addr=127.0.0.1:8080", "--enable-leader-election")
-	}
-
-	deployment.Spec.Template.Spec.HostNetwork = true
-	deployment.Spec.Strategy.RollingUpdate = nil
-	deployment.Spec.Strategy.Type = appsv1.RecreateDeploymentStrategyType
-
-	newDeployment, err = json.Marshal(deployment)
-	if err != nil {
-		return err
-	}
-
-	patchBytes, err = strategicpatch.CreateTwoWayMergePatch(oldDeployment, newDeployment, appsv1.Deployment{})
-	if err != nil {
-		return fmt.Errorf("failed to create two way merge patch: %w", err)
-	}
-
-	_, err = clusterAPI.clientset.AppsV1().Deployments(sideroNamespace).Patch(ctx, deployment.Name, types.StrategicMergePatchType, patchBytes, metav1.PatchOptions{
-		FieldManager: "sfyra",
-	})
-	if err != nil {
-		return err
 	}
 
 	return nil
